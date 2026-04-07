@@ -46,7 +46,7 @@ export default function CameraScreen() {
       console.log("Sending to backend:", payload);
 
       const res = await fetch(
-        "https://superexcrescently-unsympathizing-jolyn.ngrok-free.dev/api/scan-word",
+        "https://myvocabweb.vercel.app/api/scan-word",
         {
           method: "POST",
           headers: { "Content-Type": "application/json" },
