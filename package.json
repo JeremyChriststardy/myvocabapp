@@ -8,7 +8,8 @@
     "android": "expo start --android",
     "ios": "expo start --ios",
     "web": "expo start --web",
-    "lint": "expo lint"
+    "lint": "expo lint",
+    "sync-push": "del /f /s /q package-lock.json && rd /s /q node_modules && npm install && git add package-lock.json && git commit -m \"build: windows nuclear lockfile sync\" && git push"
   },
   "dependencies": {
     "@expo/vector-icons": "^15.0.3",

@@ -44,32 +44,45 @@ export default function CameraScreen() {
   const sendImage = async (base64Image?: string) => {
     try {
       const payload = JSON.stringify({ image: base64Image || "mock_base64_string" });
-      console.log("Sending to backend:", payload);
+      
+      // 1. Log the size to see if you're over 4.5MB
+      const sizeInMB = (payload.length / (1024 * 1024)).toFixed(2);
+      console.log(`🚀 Sending to backend (${sizeInMB} MB)`);
 
-      const res = await fetch(
-        "https://myvocabweb.vercel.app/api/scan-word",
-        {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: payload,
-        }
-      );
+      const res = await fetch("https://myvocabweb.vercel.app/api/scan-word", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: payload,
+      });
 
-      const data = await res.json();
+      console.log("📡 HTTP Status:", res.status);
+
+      // 2. Read as text first to avoid JSON parse errors
+      const textResponse = await res.text();
+      
+      let data;
+      try {
+        data = JSON.parse(textResponse);
+      } catch (e) {
+        console.error("❌ Server returned non-JSON response. Check Vercel limits.");
+        console.log("Server Message:", textResponse.substring(0, 200)); // Show the first 200 chars
+        return null;
+      }
+
       console.log("API RESPONSE:", data);
 
-      if (data.ok && data.result) {
+      if (res.ok && data.result) {
         return {
           word: data.result.word,
           definition: data.result.definition,
-          id: data.result.id, // This is the UUID from your dictionary table
+          id: data.result.id,
           phonetic: data.result.phonetic,
           part_of_speech: data.result.part_of_speech,
         };
       }
       return null;
     } catch (err) {
-      console.error("ERROR:", err);
+      console.error("🚨 NETWORK/FETCH ERROR:", err);
       return null;
     }
   };
