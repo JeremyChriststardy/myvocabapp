@@ -35,6 +35,7 @@ export default function CameraScreen() {
   const [mode, setMode] = useState<Mode>("real_world");
   const [cameraState, setCameraState] = useState<CameraState>("preview");
   const [capturedImage, setCapturedImage] = useState<string | null>(null);
+  const [compressedBase64, setCompressedBase64] = useState<string | null>(null);
   const [result, setResult] = useState<{ word: string; definition: string, id: string, phonetic: string, part_of_speech: string} | null>(null);
   const [showSaveLoginModal, setShowSaveLoginModal] = useState(false);
   const [showHistoryLoginModal, setShowHistoryLoginModal] = useState(false);
@@ -128,15 +129,27 @@ export default function CameraScreen() {
     if (!cameraRef.current) return;
 
     try {
-      const photo = await cameraRef.current.takePictureAsync({ base64: true });
-      if (!photo?.base64) return;
+      const photo = await cameraRef.current.takePictureAsync({ base64: false });
+      if (!photo?.uri) return;
 
       setCapturedImage(photo.uri);
       setCameraState("processing");
       openSheet();
 
-      // fetch result via sendImage
-      const resultData = await sendImage(photo.base64);
+      const manipulatedImage = await ImageManipulator.manipulateAsync(
+        photo.uri,
+        [{ resize: { width: 800 } }],
+        { compress: 0.7, format: ImageManipulator.SaveFormat.JPEG }
+      );
+
+      const base64String = await FileSystem.readAsStringAsync(manipulatedImage.uri, {
+        encoding: 'base64',
+      });
+
+      setCompressedBase64(base64String);
+
+      // fetch result via sendImage using precompressed Base64
+      const resultData = await sendImage(base64String);
 
       // set single object or fallback
       setResult(
@@ -166,6 +179,7 @@ export default function CameraScreen() {
   const handleRetake = () => {
     hideSheetCompletely();
     setCapturedImage(null);
+    setCompressedBase64(null);
     setResult(null);
     setCameraState("preview");
   };
@@ -352,24 +366,16 @@ export default function CameraScreen() {
                                 return;
                               }
 
-                              // --- 1. COMPRESSION ---
-                              console.log("1. Starting compression...");
-                              const manipulatedImage = await ImageManipulator.manipulateAsync(
-                                capturedImage!,
-                                [{ resize: { width: 800 } }],
-                                { compress: 0.7, format: ImageManipulator.SaveFormat.JPEG }
-                              );
-
-                              // --- 2. THE BYPASS (No more uriToBlob) ---
-                              console.log("2. Reading file as Base64...");
-                              // We read directly from the URI provided by ImageManipulator
-                              const base64 = await FileSystem.readAsStringAsync(manipulatedImage.uri, {
-                                encoding: 'base64', // Use the string directly to avoid the TS error
-                              });
+                              if (!compressedBase64) {
+                                console.error("Compressed Base64 is missing. Capture must complete before saving.");
+                                return;
+                              }
 
                               const fileExt = "jpg";
                               const filePath = `${user.id}/${Date.now()}.${fileExt}`;
-                              console.log("3. Storage upload initiated (ArrayBuffer mode)...");
+                              console.log("1. Upload initiated using precompressed Base64...");
+
+                              const base64 = compressedBase64;
 
                               // --- 3. UPLOAD USING DECODED ARRAYBUFFER ---
                               // decode(base64) turns the string into binary data Supabase loves
