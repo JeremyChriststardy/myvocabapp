@@ -4,7 +4,7 @@ import * as FileSystem from 'expo-file-system/legacy';
 import * as ImageManipulator from 'expo-image-manipulator';
 import { LinearGradient } from "expo-linear-gradient";
 import { useRouter } from "expo-router";
-import React, { useEffect, useRef, useState } from "react";
+import React, { useRef, useState } from "react";
 import {
   ActivityIndicator,
   Animated,
@@ -38,6 +38,8 @@ export default function CameraScreen() {
   const [result, setResult] = useState<{ word: string; definition: string, id: string, phonetic: string, part_of_speech: string} | null>(null);
   const [showSaveLoginModal, setShowSaveLoginModal] = useState(false);
   const [showHistoryLoginModal, setShowHistoryLoginModal] = useState(false);
+  const [isCameraActive, setIsCameraActive] = useState(false);
+  const [permissionDenied, setPermissionDenied] = useState(false);
 
   const sendImage = async (base64Image?: string) => {
     try {
@@ -84,10 +86,6 @@ export default function CameraScreen() {
       definition: "blow hard",
     },
   ];
-
-  useEffect(() => {
-    if (!permission) requestPermission();
-  }, [permission]);
 
   const openSheet = () => {
     Animated.timing(slideAnim, {
@@ -159,6 +157,23 @@ export default function CameraScreen() {
     setCameraState("preview");
   };
 
+  const handleStartScanning = async () => {
+    if (permission?.granted) {
+      setPermissionDenied(false);
+      setIsCameraActive(true);
+      return;
+    }
+
+    const permissionResult = await requestPermission();
+    if (permissionResult?.granted) {
+      setPermissionDenied(false);
+      setIsCameraActive(true);
+      return;
+    }
+
+    setPermissionDenied(true);
+  };
+
   const panResponder = useRef(
     PanResponder.create({
       onMoveShouldSetPanResponder: (_, gestureState) =>
@@ -176,209 +191,219 @@ export default function CameraScreen() {
     })
   ).current;
 
-  if (!permission)
-    return (
-      <View style={styles.loadingContainer}>
-        <Text style={styles.loadingText}>Initializing Camera...</Text>
-      </View>
-    );
-
-  if (!permission.granted)
-    return (
-      <View style={styles.loadingContainer}>
-        <Text style={styles.loadingText}>Camera permission is required.</Text>
-      </View>
-    );
+  const isPermissionGranted = permission?.granted === true;
+  const isPermissionDenied = permission?.status === 'denied';
 
   try {
     return (
-    <View style={styles.container}>
-      {/* CAMERA PREVIEW */}
-      {cameraState === "preview" && (
-        <>
-          <CameraView ref={cameraRef} style={styles.camera} />
-
-          {/* Overlay scanning frame */}
-          <ScanningFrame mode={mode === "real_world" ? "real" : "game"} />
-
-          {/* Top gradient covering 10% */}
-          <LinearGradient
-            colors={["rgba(0,0,0,0.6)", "transparent"]}
-            style={{ 
-              position: "absolute", 
-              top: 0, 
-              left: 0, 
-              right: 0, 
-              height: height * 0.2  // top 10%
-            }}
-          />
-
-          {/* Bottom gradient covering 20% */}
-          <LinearGradient
-            colors={["transparent", "rgba(0,0,0,0.6)"]}
-            style={{ 
-              position: "absolute", 
-              bottom: 0, 
-              left: 0, 
-              right: 0, 
-              height: height * 0.2  // bottom 20%
-            }}
-          />
-
-          {/* Settings */}
-          <TouchableOpacity
-            style={styles.settingsButton}
-            onPress={() => router.push("../profile")}
-          >
-            <Icon name="account-circle" size={24} color="white" />
-          </TouchableOpacity>
-
-          <View style={styles.bottomControls}>
-            {/* History */}
-            <TouchableOpacity
-              style={styles.sideButton}
-              onPress={async () => {
-                try {
-                  const { data: { user } } = await supabase.auth.getUser();
-                  if (user) {
-                    router.push("/history");
-                  } else {
-                    setShowHistoryLoginModal(true);
-                  }
-                } catch (err) {
-                  setShowHistoryLoginModal(true);
-                }
-              }}
-            >
-              <Icon name="book" size={30} color="white" />
-            </TouchableOpacity>
-
-            {/* Capture */}
-            <TouchableOpacity
-              style={[styles.captureButton, { opacity: 0.4 }]}
-              onPress={handleCapture}
-            >
-              <View style={styles.captureInner} />
-            </TouchableOpacity>
-
-            {/* Mode toggle */}
-            <TouchableOpacity
-              style={styles.sideButton}
-              onPress={() =>
-                setMode(mode === "real_world" ? "gaming" : "real_world")
-              }
-            >
-              <Icon
-                name={mode === "real_world" ? "public" : "sports-esports"}
-                size={30}
-                color="white"
-              />
+      <View style={styles.container}>
+        {!isCameraActive && (
+          <View style={styles.starterContainer}>
+            <Text style={styles.starterTitle}>Ready to Scan</Text>
+            <Text style={styles.starterSubtitle}>
+              Tap the button below to request camera access and start scanning.
+            </Text>
+            {(permissionDenied || isPermissionDenied) && (
+              <Text style={styles.deniedText}>
+                Camera access was denied. Please enable it in settings and try again.
+              </Text>
+            )}
+            <TouchableOpacity style={styles.primaryButton} onPress={handleStartScanning}>
+              <Text style={styles.primaryButtonText}>Start Scanning</Text>
             </TouchableOpacity>
           </View>
-        </>
-      )}
+        )}
 
-      {/* FROZEN IMAGE */}
-      {cameraState !== "preview" && capturedImage && (
-        <>
-          <Image source={{ uri: capturedImage }} style={styles.camera} />
+        {isCameraActive && isPermissionGranted && (
+          <>
+            {/* CAMERA PREVIEW */}
+            {cameraState === "preview" && (
+              <>
+                <CameraView ref={cameraRef} style={styles.camera} />
 
-          {/* Back */}
-          <TouchableOpacity style={styles.backButton} onPress={handleRetake}>
-            <Icon name="arrow-back" size={24} color="white" />
-          </TouchableOpacity>
+                {/* Overlay scanning frame */}
+                <ScanningFrame mode={mode === "real_world" ? "real" : "game"} />
 
-          <Animated.View
-            style={[styles.bottomSheet, { transform: [{ translateY: slideAnim }] }]}
-            {...panResponder.panHandlers}
-          >
-            <View style={styles.dragHandle} />
+                {/* Top gradient covering 10% */}
+                <LinearGradient
+                  colors={["rgba(0,0,0,0.6)", "transparent"]}
+                  style={{
+                    position: "absolute",
+                    top: 0,
+                    left: 0,
+                    right: 0,
+                    height: height * 0.2, // top 10%
+                  }}
+                />
 
-            {cameraState === "processing" && (
-              <View style={styles.center}>
-                <ActivityIndicator size="large" color="#7C3AED" />
-                <Text style={styles.loadingText}>Analyzing...</Text>
-              </View>
-            )}
+                {/* Bottom gradient covering 20% */}
+                <LinearGradient
+                  colors={["transparent", "rgba(0,0,0,0.6)"]}
+                  style={{
+                    position: "absolute",
+                    bottom: 0,
+                    left: 0,
+                    right: 0,
+                    height: height * 0.2, // bottom 20%
+                  }}
+                />
 
-            {cameraState === "result" && result && (
-              <View style={styles.card}>
-                <View style={styles.cardHeader}>
-                  <Text style={styles.word}>{result.word}</Text>
-                  <Text style={styles.pos}> ({result.part_of_speech.toLowerCase()})</Text>
+                {/* Settings */}
+                <TouchableOpacity
+                  style={styles.settingsButton}
+                  onPress={() => router.push("../profile")}
+                >
+                  <Icon name="account-circle" size={24} color="white" />
+                </TouchableOpacity>
+
+                <View style={styles.bottomControls}>
+                  {/* History */}
                   <TouchableOpacity
-                    style={styles.saveButton}
+                    style={styles.sideButton}
                     onPress={async () => {
                       try {
                         const { data: { user } } = await supabase.auth.getUser();
-                        if (!user) {
-                          setShowSaveLoginModal(true);
-                          return;
-                        }
-
-                        // --- 1. COMPRESSION ---
-                        console.log("1. Starting compression...");
-                        const manipulatedImage = await ImageManipulator.manipulateAsync(
-                          capturedImage!,
-                          [{ resize: { width: 800 } }],
-                          { compress: 0.7, format: ImageManipulator.SaveFormat.JPEG }
-                        );
-
-                        // --- 2. THE BYPASS (No more uriToBlob) ---
-                        console.log("2. Reading file as Base64...");
-                        // We read directly from the URI provided by ImageManipulator
-                        const base64 = await FileSystem.readAsStringAsync(manipulatedImage.uri, {
-                          encoding: 'base64', // Use the string directly to avoid the TS error
-                        });
-
-                        const fileExt = "jpg";
-                        const filePath = `${user.id}/${Date.now()}.${fileExt}`;
-                        console.log("3. Storage upload initiated (ArrayBuffer mode)...");
-
-                        // --- 3. UPLOAD USING DECODED ARRAYBUFFER ---
-                        // decode(base64) turns the string into binary data Supabase loves
-                        const { data: uploadData, error: uploadError } = await supabase.storage
-                          .from("captures")
-                          .upload(filePath, decode(base64), {
-                            contentType: "image/jpeg",
-                            upsert: true 
-                          });
-
-                        if (uploadError) {
-                          console.error("Storage upload failed:", uploadError);
-                          return;
-                        }
-
-                        // --- 4. DATABASE SAVE ---
-                        console.log("4. Database upsert initiated...");
-                        const { error: dbError } = await supabase.from("user_vocabs").upsert({
-                          user_id: user.id,
-                          dictionary_entry_id: result.id,
-                          phonetic: result.phonetic || "",
-                          status: "New",
-                          image_path: filePath, 
-                        });
-
-                        if (dbError) {
-                          console.error("Database save failed:", dbError);
+                        if (user) {
+                          router.push("/history");
                         } else {
-                          console.log("Success! Small image saved via ArrayBuffer.");
-                          router.push("/history"); 
+                          setShowHistoryLoginModal(true);
                         }
                       } catch (err) {
-                        console.error("The Ultimate Bypass Failed:", err);
+                        setShowHistoryLoginModal(true);
                       }
                     }}
                   >
-                    <Icon name="save" size={20} color="white" />
+                    <Icon name="book" size={30} color="white" />
+                  </TouchableOpacity>
+
+                  {/* Capture */}
+                  <TouchableOpacity
+                    style={[styles.captureButton, { opacity: 0.4 }]}
+                    onPress={handleCapture}
+                  >
+                    <View style={styles.captureInner} />
+                  </TouchableOpacity>
+
+                  {/* Mode toggle */}
+                  <TouchableOpacity
+                    style={styles.sideButton}
+                    onPress={() =>
+                      setMode(mode === "real_world" ? "gaming" : "real_world")
+                    }
+                  >
+                    <Icon
+                      name={mode === "real_world" ? "public" : "sports-esports"}
+                      size={30}
+                      color="white"
+                    />
                   </TouchableOpacity>
                 </View>
-                <Text style={styles.definition}>{result.definition}</Text>
-              </View>
+              </>
             )}
-          </Animated.View>
-        </>
-      )}
+
+            {/* FROZEN IMAGE */}
+            {cameraState !== "preview" && capturedImage && (
+              <>
+                <Image source={{ uri: capturedImage }} style={styles.camera} />
+
+                {/* Back */}
+                <TouchableOpacity style={styles.backButton} onPress={handleRetake}>
+                  <Icon name="arrow-back" size={24} color="white" />
+                </TouchableOpacity>
+
+                <Animated.View
+                  style={[styles.bottomSheet, { transform: [{ translateY: slideAnim }] }]}
+                  {...panResponder.panHandlers}
+                >
+                  <View style={styles.dragHandle} />
+
+                  {cameraState === "processing" && (
+                    <View style={styles.center}>
+                      <ActivityIndicator size="large" color="#7C3AED" />
+                      <Text style={styles.loadingText}>Analyzing...</Text>
+                    </View>
+                  )}
+
+                  {cameraState === "result" && result && (
+                    <View style={styles.card}>
+                      <View style={styles.cardHeader}>
+                        <Text style={styles.word}>{result.word}</Text>
+                        <Text style={styles.pos}> ({result.part_of_speech.toLowerCase()})</Text>
+                        <TouchableOpacity
+                          style={styles.saveButton}
+                          onPress={async () => {
+                            try {
+                              const { data: { user } } = await supabase.auth.getUser();
+                              if (!user) {
+                                setShowSaveLoginModal(true);
+                                return;
+                              }
+
+                              // --- 1. COMPRESSION ---
+                              console.log("1. Starting compression...");
+                              const manipulatedImage = await ImageManipulator.manipulateAsync(
+                                capturedImage!,
+                                [{ resize: { width: 800 } }],
+                                { compress: 0.7, format: ImageManipulator.SaveFormat.JPEG }
+                              );
+
+                              // --- 2. THE BYPASS (No more uriToBlob) ---
+                              console.log("2. Reading file as Base64...");
+                              // We read directly from the URI provided by ImageManipulator
+                              const base64 = await FileSystem.readAsStringAsync(manipulatedImage.uri, {
+                                encoding: 'base64', // Use the string directly to avoid the TS error
+                              });
+
+                              const fileExt = "jpg";
+                              const filePath = `${user.id}/${Date.now()}.${fileExt}`;
+                              console.log("3. Storage upload initiated (ArrayBuffer mode)...");
+
+                              // --- 3. UPLOAD USING DECODED ARRAYBUFFER ---
+                              // decode(base64) turns the string into binary data Supabase loves
+                              const { data: uploadData, error: uploadError } = await supabase.storage
+                                .from("captures")
+                                .upload(filePath, decode(base64), {
+                                  contentType: "image/jpeg",
+                                  upsert: true 
+                                });
+
+                              if (uploadError) {
+                                console.error("Storage upload failed:", uploadError);
+                                return;
+                              }
+
+                              // --- 4. DATABASE SAVE ---
+                              console.log("4. Database upsert initiated...");
+                              const { error: dbError } = await supabase.from("user_vocabs").upsert({
+                                user_id: user.id,
+                                dictionary_entry_id: result.id,
+                                phonetic: result.phonetic || "",
+                                status: "New",
+                                image_path: filePath, 
+                              });
+
+                              if (dbError) {
+                                console.error("Database save failed:", dbError);
+                              } else {
+                                console.log("Success! Small image saved via ArrayBuffer.");
+                                router.push("/history"); 
+                              }
+                            } catch (err) {
+                              console.error("The Ultimate Bypass Failed:", err);
+                            }
+                          }}
+                        >
+                          <Icon name="save" size={20} color="white" />
+                        </TouchableOpacity>
+                      </View>
+                      <Text style={styles.definition}>{result.definition}</Text>
+                    </View>
+                  )}
+                </Animated.View>
+              </>
+            )}
+          </>
+        )}
 
       {/* Save Login Modal */}
       <Modal
@@ -546,6 +571,46 @@ const styles = StyleSheet.create({
     fontSize: 16,
     color: '#990000',
     textAlign: 'center',
+  },
+  starterContainer: {
+    flex: 1,
+    backgroundColor: '#ffffff',
+    justifyContent: 'center',
+    alignItems: 'center',
+    padding: 24,
+  },
+  starterTitle: {
+    fontSize: 24,
+    fontWeight: '700',
+    color: '#0D3B66',
+    marginBottom: 12,
+    textAlign: 'center',
+  },
+  starterSubtitle: {
+    fontSize: 16,
+    color: '#333333',
+    textAlign: 'center',
+    marginBottom: 24,
+    lineHeight: 22,
+  },
+  deniedText: {
+    color: '#B00020',
+    textAlign: 'center',
+    marginBottom: 18,
+  },
+  primaryButton: {
+    backgroundColor: '#0D3B66',
+    paddingVertical: 14,
+    paddingHorizontal: 28,
+    borderRadius: 14,
+    alignItems: 'center',
+    width: '100%',
+    maxWidth: 280,
+  },
+  primaryButtonText: {
+    color: '#ffffff',
+    fontSize: 16,
+    fontWeight: '700',
   },
 
   card: {

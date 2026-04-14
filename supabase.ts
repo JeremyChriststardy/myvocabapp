@@ -1,11 +1,16 @@
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import { createClient } from '@supabase/supabase-js';
+import { Platform } from 'react-native';
 
-// 1. Get the keys with empty strings as fallbacks to prevent a crash
-const supabaseUrl = process.env.EXPO_PUBLIC_SUPABASE_URL || '';
-const supabaseAnonKey = process.env.EXPO_PUBLIC_SUPABASE_ANON_KEY || '';
+const supabaseUrl = process.env.EXPO_PUBLIC_SUPABASE_URL || process.env.NEXT_PUBLIC_SUPABASE_URL;
+const supabaseAnonKey = process.env.EXPO_PUBLIC_SUPABASE_ANON_KEY || process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
 
-// 2. Initialize the client (it won't crash even if strings are empty)
-export const supabase = createClient(supabaseUrl, supabaseAnonKey);
-
-// 3. Optional: A simple check you can call inside your components
-export const isSupabaseConfigured = !!(supabaseUrl && supabaseAnonKey);
+export const supabase = createClient(supabaseUrl!, supabaseAnonKey!, {
+  auth: {
+    // Mobile uses AsyncStorage, Web uses localStorage
+    storage: Platform.OS === 'web' ? window.localStorage : AsyncStorage,
+    autoRefreshToken: true,
+    persistSession: true,
+    detectSessionInUrl: false, // Set to false for mobile to avoid deep-link conflicts
+  },
+});
