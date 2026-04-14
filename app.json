@@ -8,14 +8,23 @@
     "scheme": "myvocabapp",
     "userInterfaceStyle": "automatic",
     "ios": {
-      "supportsTablet": true
+      "supportsTablet": true,
+      "bundleIdentifier": "com.jchriststardy.MyVocabApp",
+      "infoPlist": {
+        "NSCameraUsageDescription": "MyVocabApp needs camera access to scan text and help you learn new words.",
+        "NSPhotoLibraryUsageDescription": "MyVocabApp needs library access to save your captured vocabulary images.",
+        "NSPhotoLibraryAddUsageDescription": "MyVocabApp needs permission to save images to your gallery."
+      }
     },
     "android": {
+      "package": "com.jchriststardy.MyVocabApp",
+      "versionCode": 1,
       "permissions": [
         "INTERNET",
         "CAMERA",
         "READ_EXTERNAL_STORAGE",
-        "WRITE_EXTERNAL_STORAGE"
+        "WRITE_EXTERNAL_STORAGE",
+        "FOREGROUND_SERVICE"
       ],
       "usesCleartextTraffic": true,
       "adaptiveIcon": {
@@ -24,8 +33,7 @@
         "backgroundImage": "./assets/images/android-icon-background.png",
         "monochromeImage": "./assets/images/android-icon-monochrome.png"
       },
-      "predictiveBackGestureEnabled": false,
-      "package": "com.jchriststardy.MyVocabApp"
+      "predictiveBackGestureEnabled": false
     },
     "web": {
       "output": "static",
@@ -33,6 +41,12 @@
     },
     "plugins": [
       "expo-router",
+      [
+        "expo-camera",
+        {
+          "cameraPermission": "Allow MyVocabApp to access your camera for word scanning."
+        }
+      ],
       [
         "expo-splash-screen",
         {
