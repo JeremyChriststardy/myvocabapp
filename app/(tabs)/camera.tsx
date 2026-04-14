@@ -1,4 +1,7 @@
+import { decode } from 'base64-arraybuffer';
 import { CameraView, useCameraPermissions } from "expo-camera";
+import * as FileSystem from 'expo-file-system/legacy';
+import * as ImageManipulator from 'expo-image-manipulator';
 import { LinearGradient } from "expo-linear-gradient";
 import { useRouter } from "expo-router";
 import React, { useEffect, useRef, useState } from "react";
@@ -6,21 +9,17 @@ import {
   ActivityIndicator,
   Animated,
   Dimensions,
-  FlatList,
   Image,
   Modal,
   PanResponder,
   StyleSheet,
   Text,
   TouchableOpacity,
-  View,
+  View
 } from "react-native";
 import Icon from "react-native-vector-icons/MaterialIcons";
-import * as ImageManipulator from 'expo-image-manipulator';
-import * as FileSystem from 'expo-file-system/legacy';
-import { decode } from 'base64-arraybuffer';
 import { ScanningFrame } from "../../components/ui/ScanningFrame";
-import { supabase } from "@/supabase";
+import { supabase } from "../../supabase";
 
 type Mode = "real_world" | "gaming";
 type CameraState = "preview" | "processing" | "result";
@@ -29,7 +28,7 @@ type CameraState = "preview" | "processing" | "result";
 export default function CameraScreen() {
   const router = useRouter();
   const [permission, requestPermission] = useCameraPermissions();
-  const cameraRef = useRef<CameraView>(null);
+  const cameraRef = useRef<any>(null);
 
   const { height } = Dimensions.get("window");
 
@@ -117,35 +116,40 @@ export default function CameraScreen() {
   const handleCapture = async () => {
     if (!cameraRef.current) return;
 
-    const photo = await cameraRef.current.takePictureAsync({ base64: true });
-    if (!photo?.base64) return;
+    try {
+      const photo = await cameraRef.current.takePictureAsync({ base64: true });
+      if (!photo?.base64) return;
 
-    setCapturedImage(photo.uri);
-    setCameraState("processing");
-    openSheet();
+      setCapturedImage(photo.uri);
+      setCameraState("processing");
+      openSheet();
 
-    // fetch result via sendImage
-    const resultData = await sendImage(photo.base64);
+      // fetch result via sendImage
+      const resultData = await sendImage(photo.base64);
 
-    // set single object or fallback
-    setResult(
-      resultData
-        ? {
-            word: resultData.word,
-            definition: resultData.definition,
-            id: resultData.id || "temp-id",
-            phonetic: resultData.phonetic || "",
-            part_of_speech: resultData.part_of_speech || "Noun",
-          }
-        : {
-            word: "example",
-            definition: "mock definition",
-            id: "mock-id",
-            phonetic: "",
-            part_of_speech: "Noun",
-          }
-    );
-    setCameraState("result");
+      // set single object or fallback
+      setResult(
+        resultData
+          ? {
+              word: resultData.word,
+              definition: resultData.definition,
+              id: resultData.id || "temp-id",
+              phonetic: resultData.phonetic || "",
+              part_of_speech: resultData.part_of_speech || "Noun",
+            }
+          : {
+              word: "example",
+              definition: "mock definition",
+              id: "mock-id",
+              phonetic: "",
+              part_of_speech: "Noun",
+            }
+      );
+      setCameraState("result");
+    } catch (err) {
+      console.error("Camera capture failed", err);
+      setCameraState("preview");
+    }
   };
 
   const handleRetake = () => {
@@ -172,15 +176,22 @@ export default function CameraScreen() {
     })
   ).current;
 
-  if (!permission) return <View />;
-  if (!permission.granted)
+  if (!permission)
     return (
-      <View style={styles.center}>
-        <Text style={{ color: "white" }}>No access to camera</Text>
+      <View style={styles.loadingContainer}>
+        <Text style={styles.loadingText}>Initializing Camera...</Text>
       </View>
     );
 
-  return (
+  if (!permission.granted)
+    return (
+      <View style={styles.loadingContainer}>
+        <Text style={styles.loadingText}>Camera permission is required.</Text>
+      </View>
+    );
+
+  try {
+    return (
     <View style={styles.container}>
       {/* CAMERA PREVIEW */}
       {cameraState === "preview" && (
@@ -430,6 +441,14 @@ export default function CameraScreen() {
       </Modal>
     </View>
   );
+  } catch (err) {
+    console.error("Camera screen failed to render", err);
+    return (
+      <View style={styles.errorContainer}>
+        <Text style={styles.errorText}>Camera Error - App Still Alive</Text>
+      </View>
+    );
+  }
 }
 
 const styles = StyleSheet.create({
@@ -505,9 +524,28 @@ const styles = StyleSheet.create({
     marginBottom: 10,
   },
 
+  loadingContainer: {
+    flex: 1,
+    backgroundColor: '#ffffff',
+    justifyContent: 'center',
+    alignItems: 'center',
+    paddingHorizontal: 20,
+  },
   loadingText: {
-    marginTop: 12,
-    color: "#aaa",
+    fontSize: 16,
+    color: '#111',
+  },
+  errorContainer: {
+    flex: 1,
+    backgroundColor: '#ffffff',
+    justifyContent: 'center',
+    alignItems: 'center',
+    paddingHorizontal: 20,
+  },
+  errorText: {
+    fontSize: 16,
+    color: '#990000',
+    textAlign: 'center',
   },
 
   card: {

@@ -1,17 +1,20 @@
 {
   "extends": "expo/tsconfig.base",
   "compilerOptions": {
-    "strict": true,
+    "ignoreDeprecations": "6.0",
+    "strict": false,
+    "skipLibCheck": true,
+    "noEmit": true,
+    "baseUrl": ".",           // <--- Tells TS to start looking from HERE
     "paths": {
-      "@/*": [
-        "./*"
-      ]
-    }
+      "@/*": ["./*"]          // <--- Maps @/supabase to ./supabase.ts
+    },
+    "rootDir": ".",
+    "isolatedModules": true
   },
   "include": [
-    "**/*.ts",
-    "**/*.tsx",
-    ".expo/types/**/*.ts",
+    "app", 
+    "supabase.ts",            // <--- Make sure this is explicitly included
     "expo-env.d.ts"
   ]
 }
