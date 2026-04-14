@@ -5,16 +5,19 @@
     "strict": false,
     "skipLibCheck": true,
     "noEmit": true,
-    "baseUrl": ".",           // <--- Tells TS to start looking from HERE
+    "baseUrl": ".",
     "paths": {
-      "@/*": ["./*"]          // <--- Maps @/supabase to ./supabase.ts
+      "@/*": [
+        "./*"
+      ]
     },
     "rootDir": ".",
     "isolatedModules": true
   },
   "include": [
-    "app", 
-    "supabase.ts",            // <--- Make sure this is explicitly included
-    "expo-env.d.ts"
+    "app",
+    "supabase.ts",
+    "expo-env.d.ts",
+    ".expo/types/**/*.ts"
   ]
 }
