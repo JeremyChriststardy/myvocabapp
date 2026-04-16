@@ -1,23 +1,15 @@
 import { useRouter } from 'expo-router';
-import React from 'react';
-import { Button, SafeAreaView, StyleSheet, Text, View } from 'react-native';
+import React, { useEffect } from 'react';
+import { StyleSheet, View } from 'react-native';
 
 export default function Home() {
   const router = useRouter();
 
-  return (
-    <SafeAreaView style={styles.container}>
-      <View style={styles.content}>
-        <Text style={styles.title}>System Check: App Loaded</Text>
-        <Text style={styles.subtitle}>
-          The app has mounted successfully. Press the button below to continue to the camera screen.
-        </Text>
-        <View style={styles.buttonContainer}>
-          <Button title="Go to Camera" onPress={() => router.push('/camera')} />
-        </View>
-      </View>
-    </SafeAreaView>
-  );
+  useEffect(() => {
+    router.replace('/camera');
+  }, [router]);
+
+  return <View style={styles.container} />;
 }
 
 const styles = StyleSheet.create({

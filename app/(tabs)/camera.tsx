@@ -4,7 +4,7 @@ import * as FileSystem from 'expo-file-system/legacy';
 import * as ImageManipulator from 'expo-image-manipulator';
 import { LinearGradient } from "expo-linear-gradient";
 import { useRouter } from "expo-router";
-import React, { useRef, useState } from "react";
+import React, { useEffect, useRef, useState } from "react";
 import {
   ActivityIndicator,
   Animated,
@@ -184,22 +184,20 @@ export default function CameraScreen() {
     setCameraState("preview");
   };
 
-  const handleStartScanning = async () => {
-    if (permission?.granted) {
-      setPermissionDenied(false);
-      setIsCameraActive(true);
-      return;
-    }
+  useEffect(() => {
+    const initializeCamera = async () => {
+      const permissionResult = await requestPermission();
+      if (permissionResult?.granted) {
+        setPermissionDenied(false);
+        setIsCameraActive(true);
+        return;
+      }
 
-    const permissionResult = await requestPermission();
-    if (permissionResult?.granted) {
-      setPermissionDenied(false);
-      setIsCameraActive(true);
-      return;
-    }
+      setPermissionDenied(true);
+    };
 
-    setPermissionDenied(true);
-  };
+    initializeCamera();
+  }, []);
 
   const panResponder = useRef(
     PanResponder.create({
@@ -220,6 +218,17 @@ export default function CameraScreen() {
 
   const isPermissionGranted = permission?.granted === true;
   const isPermissionDenied = permission?.status === 'denied';
+
+  const handleStartScanning = async () => {
+    const permissionResult = await requestPermission();
+    if (permissionResult?.granted) {
+      setPermissionDenied(false);
+      setIsCameraActive(true);
+      return;
+    }
+
+    setPermissionDenied(true);
+  };
 
   try {
     return (
