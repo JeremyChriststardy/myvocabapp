@@ -22,8 +22,22 @@ import { ScanningFrame } from "../../components/ui/ScanningFrame";
 import { supabase } from "../../supabase";
 
 type Mode = "real_world" | "gaming";
-type CameraState = "preview" | "processing" | "result";
+type CameraState = "preview" | "cropping" | "processing" | "result";
+type CropHandle =
+  | "topLeft"
+  | "topRight"
+  | "bottomLeft"
+  | "bottomRight"
+  | "top"
+  | "bottom"
+  | "left"
+  | "right";
 
+type PhotoInfo = {
+  uri: string;
+  width: number;
+  height: number;
+};
 
 export default function CameraScreen() {
   const router = useRouter();
@@ -35,6 +49,9 @@ export default function CameraScreen() {
   const [mode, setMode] = useState<Mode>("real_world");
   const [cameraState, setCameraState] = useState<CameraState>("preview");
   const [capturedImage, setCapturedImage] = useState<string | null>(null);
+  const [capturedPhoto, setCapturedPhoto] = useState<PhotoInfo | null>(null);
+  const [cropRect, setCropRect] = useState({ x: 0, y: 0, width: 0, height: 0 });
+  const [imageLayout, setImageLayout] = useState({ x: 0, y: 0, width: 0, height: 0 });
   const [compressedBase64, setCompressedBase64] = useState<string | null>(null);
   const [result, setResult] = useState<{ word: string; definition: string, id: string, phonetic: string, part_of_speech: string} | null>(null);
   const [showSaveLoginModal, setShowSaveLoginModal] = useState(false);
@@ -42,49 +59,79 @@ export default function CameraScreen() {
   const [isCameraActive, setIsCameraActive] = useState(false);
   const [permissionDenied, setPermissionDenied] = useState(false);
 
-  const sendImage = async (base64Image?: string) => {
-    try {
-      const payload = JSON.stringify({ image: base64Image || "mock_base64_string" });
-      
-      // 1. Log the size to see if you're over 4.5MB
-      const sizeInMB = (payload.length / (1024 * 1024)).toFixed(2);
-      console.log(`🚀 Sending to backend (${sizeInMB} MB)`);
+  const sendImage = async (imageUri: string, extraFields?: { mode?: string }) => {
+    console.log("🚀 STARTING GUEST RELAY...");
 
-      const res = await fetch("https://myvocabweb.vercel.app/api/scan-word", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: payload,
+    // 1. Setup Timeout (60 seconds for AI processing)
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => {
+      console.log("⏱️ TIMEOUT: Aborting request...");
+      controller.abort();
+    }, 60000); 
+
+    try {
+      // --- 1. UPLOAD TO ANONYMOUS BUCKET ---
+      const fileName = `guest_${Date.now()}.jpg`;
+      console.log("⬆️ 1. Reading file for Supabase...");
+
+      const base64String = await FileSystem.readAsStringAsync(imageUri, {
+        encoding: 'base64',
       });
 
-      console.log("📡 HTTP Status:", res.status);
+      console.log("⬆️ 2. Uploading to Supabase...");
+      const { data: uploadData, error: uploadError } = await supabase.storage
+        .from("guest_scans")
+        .upload(fileName, decode(base64String), {
+          contentType: "image/jpeg"
+        });
 
-      // 2. Read as text first to avoid JSON parse errors
-      const textResponse = await res.text();
-      
-      let data;
-      try {
-        data = JSON.parse(textResponse);
-      } catch (e) {
-        console.error("❌ Server returned non-JSON response. Check Vercel limits.");
-        console.log("Server Message:", textResponse.substring(0, 200)); // Show the first 200 chars
+      if (uploadError) {
+        console.error("🚨 Supabase Guest Upload Failed:", uploadError.message);
         return null;
       }
 
-      console.log("API RESPONSE:", data);
+      // --- 2. GET PUBLIC URL ---
+      const { data } = supabase.storage
+        .from("guest_scans")
+        .getPublicUrl(fileName);
+      
+      const publicUrl = data?.publicUrl;
 
-      if (res.ok && data.result) {
-        return {
-          word: data.result.word,
-          definition: data.result.definition,
-          id: data.result.id,
-          phonetic: data.result.phonetic,
-          part_of_speech: data.result.part_of_speech,
-        };
+      if (!publicUrl) {
+        console.error("🚨 Could not generate Public URL");
+        return null;
+      }
+
+      console.log("✅ 3. Public URL acquired:", publicUrl);
+
+      // --- 3. PING SUPABASE PROXY (THE UNBLOCKABLE ROUTE) ---
+      console.log("➡️ 4. Pinging Supabase Edge Function...");
+
+      const { data: relayData, error: relayError } = await supabase.functions.invoke('process-scan', {
+        body: { 
+          imageUrl: publicUrl, 
+          mode: extraFields?.mode || "real_world" 
+        }
+      });
+
+      if (relayError) {
+        console.error("🚨 Supabase Relay Error:", relayError);
+        return null;
+      }
+
+      console.log("🏁 5. Relay Complete! Data:", relayData);
+      return relayData.result || null;
+
+    } catch (error: any) {
+      // Check if it was an intentional abort or a real crash
+      if (error.name === 'AbortError') {
+        console.error("🚨 RELAY TIMEOUT: Vercel took too long.");
+      } else {
+        console.error("🚨 RELAY EXECUTION CRASH:", error.message);
       }
       return null;
-    } catch (err) {
-      console.error("🚨 NETWORK/FETCH ERROR:", err);
-      return null;
+    } finally {
+      clearTimeout(timeoutId);
     }
   };
 
@@ -126,32 +173,58 @@ export default function CameraScreen() {
   };
 
   const handleCapture = async () => {
-    if (!cameraRef.current) return;
+    console.log("🚨 1. CAPTURE BUTTON PRESSED");
+
+    if (!cameraRef.current) {
+      console.log("❌ FATAL: cameraRef is null!");
+      return;
+    }
 
     try {
+      console.log("📸 2. Calling takePictureAsync...");
       const photo = await cameraRef.current.takePictureAsync({ base64: false });
-      if (!photo?.uri) return;
+      
+      if (!photo?.uri) {
+        console.log("❌ FATAL: takePictureAsync returned no URI.");
+        return;
+      }
+
+      console.log("✅ 3. Picture taken successfully!");
+
+      const photoInfo: PhotoInfo = {
+        uri: photo.uri,
+        width: photo.width,
+        height: photo.height,
+      };
 
       setCapturedImage(photo.uri);
+      setCapturedPhoto(photoInfo);
+      hideSheetCompletely();
+
+      if (mode === "gaming") {
+        setCameraState("cropping");
+        return;
+      }
+
       setCameraState("processing");
       openSheet();
 
+      console.log("🖼️ 4. Manipulating image (Resizing)...");
       const manipulatedImage = await ImageManipulator.manipulateAsync(
         photo.uri,
         [{ resize: { width: 800 } }],
         { compress: 0.7, format: ImageManipulator.SaveFormat.JPEG }
       );
 
-      const base64String = await FileSystem.readAsStringAsync(manipulatedImage.uri, {
-        encoding: 'base64',
-      });
+      // NOTICE: We completely deleted Step 5 (Reading as Base64). 
+      // We are passing the native file URI directly to the uploader!
+      
+      console.log("🚀 5. Firing sendImage with URI:", manipulatedImage.uri);
+      
+      const resultData = await sendImage(manipulatedImage.uri, { mode });
 
-      setCompressedBase64(base64String);
-
-      // fetch result via sendImage using precompressed Base64
-      const resultData = await sendImage(base64String);
-
-      // set single object or fallback
+      console.log("🏁 6. handleCapture completed.");
+      
       setResult(
         resultData
           ? {
@@ -171,7 +244,275 @@ export default function CameraScreen() {
       );
       setCameraState("result");
     } catch (err) {
-      console.error("Camera capture failed", err);
+      console.error("❌ CAPTURE CRASHED:", err);
+      setCameraState("preview");
+    }
+  };
+
+  const cropRectRef = useRef(cropRect);
+  const cropStartRect = useRef(cropRect);
+  const activeCropHandle = useRef<CropHandle | null>(null);
+
+  // ADD THESE:
+  const imageLayoutRef = useRef(imageLayout);
+  const capturedPhotoRef = useRef(capturedPhoto);
+
+  useEffect(() => {
+    cropRectRef.current = cropRect;
+  }, [cropRect]);
+
+  useEffect(() => {
+    imageLayoutRef.current = imageLayout;
+  }, [imageLayout]);
+
+  useEffect(() => {
+    capturedPhotoRef.current = capturedPhoto;
+  }, [capturedPhoto]);
+
+
+  const getDisplayedImageFrame = () => {
+    // Read from refs instead of state
+    const layout = imageLayoutRef.current;
+    const photo = capturedPhotoRef.current;
+
+    if (!photo || layout.width === 0 || layout.height === 0) {
+      return {
+        x: layout.x,
+        y: layout.y,
+        width: layout.width,
+        height: layout.height,
+      };
+    }
+
+    const imageAspect = photo.width / photo.height;
+    let width = layout.width;
+    let height = width / imageAspect;
+
+    if (height > layout.height) {
+      height = layout.height;
+      width = height * imageAspect;
+    }
+
+    const x = layout.x + (layout.width - width) / 2;
+    const y = layout.y + (layout.height - height) / 2;
+
+    return { x, y, width, height };
+  };
+
+  const clampCropRect = (rect: { x: number; y: number; width: number; height: number }) => {
+    const frame = getDisplayedImageFrame();
+    const minSize = 60;
+
+    if (!frame || frame.width === 0 || frame.height === 0) {
+      return cropStartRect.current;
+    }
+
+    let { x, y, width, height } = rect;
+
+    width = Math.max(minSize, Math.min(width, frame.width));
+    height = Math.max(minSize, Math.min(height, frame.height));
+    x = Math.max(frame.x, Math.min(x, frame.x + frame.width - width));
+    y = Math.max(frame.y, Math.min(y, frame.y + frame.height - height));
+
+    if (!isFinite(x) || !isFinite(y) || !isFinite(width) || !isFinite(height)) {
+      return cropStartRect.current;
+    }
+
+    return { x, y, width, height };
+  };
+
+  const updateCropByHandle = (handle: CropHandle, dx: number, dy: number) => {
+    const start = cropStartRect.current;
+    const frame = getDisplayedImageFrame();
+    const minSize = 50;
+    let x = start.x;
+    let y = start.y;
+    let width = start.width;
+    let height = start.height;
+
+    switch (handle) {
+      case "topLeft": {
+        const maxDx = start.width - minSize;
+        const limitedDx = Math.min(dx, maxDx);
+        const maxDy = start.height - minSize;
+        const limitedDy = Math.min(dy, maxDy);
+        x = start.x + limitedDx;
+        y = start.y + limitedDy;
+        width = Math.max(minSize, start.width - limitedDx);
+        height = Math.max(minSize, start.height - limitedDy);
+        break;
+      }
+      case "topRight":
+        y = start.y + dy;
+        width = Math.max(minSize, start.width + dx);
+        height = Math.max(minSize, start.height - dy);
+        break;
+      case "bottomLeft": {
+        const maxDx = start.width - minSize;
+        const limitedDx = Math.min(dx, maxDx);
+        x = start.x + limitedDx;
+        width = Math.max(minSize, start.width - limitedDx);
+        height = Math.max(minSize, start.height + dy);
+        break;
+      }
+      case "bottomRight":
+        width = Math.max(minSize, start.width + dx);
+        height = Math.max(minSize, start.height + dy);
+        break;
+      case "top":
+        y = start.y + dy;
+        height = Math.max(minSize, start.height - dy);
+        break;
+      case "bottom":
+        height = Math.max(minSize, start.height + dy);
+        break;
+      case "left": {
+        const maxDx = start.width - minSize;
+        const limitedDx = Math.min(dx, maxDx);
+        x = start.x + limitedDx;
+        width = Math.max(minSize, start.width - limitedDx);
+        break;
+      }
+      case "right":
+        width = Math.max(minSize, start.width + dx);
+        break;
+    }
+
+    const nextRect = clampCropRect({ x, y, width, height });
+    if (
+      isFinite(nextRect.x) &&
+      isFinite(nextRect.y) &&
+      isFinite(nextRect.width) &&
+      isFinite(nextRect.height)
+    ) {
+      setCropRect(nextRect);
+    }
+  };
+
+  const cropPanResponders = useRef<Record<CropHandle, any>>({} as Record<CropHandle, any>);
+
+  if (Object.keys(cropPanResponders.current).length === 0) {
+    [
+      "topLeft",
+      "topRight",
+      "bottomLeft",
+      "bottomRight",
+      "top",
+      "bottom",
+      "left",
+      "right",
+    ].forEach((handle) => {
+      cropPanResponders.current[handle as CropHandle] = PanResponder.create({
+        onStartShouldSetPanResponder: () => true,
+        onStartShouldSetPanResponderCapture: () => true,
+        onPanResponderGrant: () => {
+          activeCropHandle.current = handle as CropHandle;
+          cropStartRect.current = cropRectRef.current;
+        },
+        onPanResponderMove: (_, gestureState) => {
+          updateCropByHandle(handle as CropHandle, gestureState.dx, gestureState.dy);
+        },
+        onPanResponderRelease: () => {
+          activeCropHandle.current = null;
+        },
+      });
+    });
+  }
+
+  const boxPanResponder = useRef(
+    PanResponder.create({
+      onStartShouldSetPanResponder: () => true,
+      onStartShouldSetPanResponderCapture: () => true,
+      onPanResponderGrant: () => {
+        cropStartRect.current = cropRectRef.current;
+      },
+      onPanResponderMove: (_, gestureState) => {
+        const start = cropStartRect.current;
+
+        // Pure delta calculation
+        const nextX = start.x + gestureState.dx;
+        const nextY = start.y + gestureState.dy;
+
+        // Route it through your clamp function to prevent out-of-bounds or NaN
+        const nextRect = clampCropRect({
+          x: nextX,
+          y: nextY,
+          width: start.width,
+          height: start.height,
+        });
+
+        setCropRect(nextRect);
+      },
+      onPanResponderRelease: () => {},
+    })
+  ).current;
+
+  const initializeCropRect = () => {
+    const frame = getDisplayedImageFrame();
+    if (frame.width === 0 || frame.height === 0) return;
+    setCropRect({
+      x: frame.x + frame.width * 0.1,
+      y: frame.y + frame.height * 0.1,
+      width: frame.width * 0.8,
+      height: frame.height * 0.8,
+    });
+  };
+
+  useEffect(() => {
+    if (cameraState === "cropping" && capturedPhoto && imageLayout.width > 0) {
+      initializeCropRect();
+    }
+  }, [cameraState, capturedPhoto, imageLayout.width, imageLayout.height]);
+
+  const handleConfirm = async () => {
+    if (!capturedPhoto || !capturedImage) return;
+
+    setCameraState("processing");
+    openSheet();
+
+    const frame = getDisplayedImageFrame();
+    const scaleX = capturedPhoto.width / frame.width;
+    const scaleY = capturedPhoto.height / frame.height;
+
+    const crop = {
+      originX: Math.max(0, Math.round((cropRect.x - frame.x) * scaleX)),
+      originY: Math.max(0, Math.round((cropRect.y - frame.y) * scaleY)),
+      width: Math.round(cropRect.width * scaleX),
+      height: Math.round(cropRect.height * scaleY),
+    };
+
+    try {
+      // 1. Perform the crop
+      const croppedImage = await ImageManipulator.manipulateAsync(
+        capturedPhoto.uri,
+        [{ crop }],
+        { compress: 0.7, format: ImageManipulator.SaveFormat.JPEG } // Removed base64: true
+      );
+
+      // 2. Pass the URI directly to sendImage (NOT the base64 string)
+      console.log("🚀 Gaming mode firing sendImage with URI:", croppedImage.uri);
+      const resultData = await sendImage(croppedImage.uri, { mode: "gaming" });
+
+      setResult(
+        resultData
+          ? {
+              word: resultData.word,
+              definition: resultData.definition,
+              id: resultData.id || "temp-id",
+              phonetic: resultData.phonetic || "",
+              part_of_speech: resultData.part_of_speech || "Noun",
+            }
+          : {
+              word: "example",
+              definition: "mock definition",
+              id: "mock-id",
+              phonetic: "",
+              part_of_speech: "Noun",
+            }
+      );
+      setCameraState("result");
+    } catch (err) {
+      console.error("Gaming crop confirmation failed", err);
       setCameraState("preview");
     }
   };
@@ -181,6 +522,8 @@ export default function CameraScreen() {
     setCapturedImage(null);
     setCompressedBase64(null);
     setResult(null);
+    setCapturedPhoto(null);
+    setCropRect({ x: 0, y: 0, width: 0, height: 0 });
     setCameraState("preview");
   };
 
@@ -202,7 +545,7 @@ export default function CameraScreen() {
   const panResponder = useRef(
     PanResponder.create({
       onMoveShouldSetPanResponder: (_, gestureState) =>
-        Math.abs(gestureState.dy) > 5,
+        cameraState !== "cropping" && Math.abs(gestureState.dy) > 5,
       onPanResponderMove: (_, gestureState) => {
         let newValue = currentOffset.current + gestureState.dy;
         if (newValue < 0) newValue = 0;
@@ -340,7 +683,90 @@ export default function CameraScreen() {
             {/* FROZEN IMAGE */}
             {cameraState !== "preview" && capturedImage && (
               <>
-                <Image source={{ uri: capturedImage }} style={styles.camera} />
+                <View style={styles.cropContainer} onLayout={(e) => setImageLayout(e.nativeEvent.layout)}>
+                  <Image
+                    source={{ uri: capturedImage }}
+                    style={styles.camera}
+                    resizeMode="contain"
+                  />
+
+                  {cameraState === "cropping" && (
+                    <View style={styles.cropOverlayWrapper} pointerEvents="box-none">
+                      <View style={styles.cropOverlay} pointerEvents="box-none">
+                        <View
+                          style={[styles.cropShadow, {
+                            top: 0,
+                            left: 0,
+                            right: 0,
+                            height: cropRect.y,
+                          }]}
+                        />
+                        <View
+                          style={[styles.cropShadow, {
+                            top: cropRect.y,
+                            left: 0,
+                            width: cropRect.x,
+                            height: cropRect.height,
+                          }]}
+                        />
+                        <View
+                          style={[styles.cropShadow, {
+                            top: cropRect.y,
+                            left: cropRect.x + cropRect.width,
+                            right: 0,
+                            height: cropRect.height,
+                          }]}
+                        />
+                        <View
+                          style={[styles.cropShadow, {
+                            top: cropRect.y + cropRect.height,
+                            left: 0,
+                            right: 0,
+                            bottom: 0,
+                          }]}
+                        />
+
+                        <View
+                          style={[styles.cropBox, {
+                            left: cropRect.x,
+                            top: cropRect.y,
+                            width: cropRect.width,
+                            height: cropRect.height,
+                          }]}
+                          pointerEvents="auto"
+                          {...boxPanResponder.panHandlers}
+                        />
+
+                        {[
+                          { handle: "topLeft", style: { left: cropRect.x - 14, top: cropRect.y - 14 } },
+                          { handle: "topRight", style: { left: cropRect.x + cropRect.width - 14, top: cropRect.y - 14 } },
+                          { handle: "bottomLeft", style: { left: cropRect.x - 14, top: cropRect.y + cropRect.height - 14 } },
+                          { handle: "bottomRight", style: { left: cropRect.x + cropRect.width - 14, top: cropRect.y + cropRect.height - 14 } },
+                          { handle: "top", style: { left: cropRect.x + cropRect.width / 2 - 14, top: cropRect.y - 14 } },
+                          { handle: "bottom", style: { left: cropRect.x + cropRect.width / 2 - 14, top: cropRect.y + cropRect.height - 14 } },
+                          { handle: "left", style: { left: cropRect.x - 14, top: cropRect.y + cropRect.height / 2 - 14 } },
+                          { handle: "right", style: { left: cropRect.x + cropRect.width - 14, top: cropRect.y + cropRect.height / 2 - 14 } },
+                        ].map(({ handle, style }) => (
+                          <View
+                            key={handle}
+                            style={[styles.cropHandle, style]}
+                            {...cropPanResponders.current[handle as CropHandle].panHandlers}
+                          />
+                        ))}
+
+                        <TouchableOpacity
+                          style={[styles.confirmCircle, {
+                            left: cropRect.x + cropRect.width - 28,
+                            top: cropRect.y - 16,
+                          }]}
+                          onPress={handleConfirm}
+                        >
+                          <Icon name="check" size={18} color="white" />
+                        </TouchableOpacity>
+                      </View>
+                    </View>
+                  )}
+                </View>
 
                 {/* Back */}
                 <TouchableOpacity style={styles.backButton} onPress={handleRetake}>
@@ -507,6 +933,55 @@ export default function CameraScreen() {
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: "#000" },
   camera: { flex: 1 },
+
+  cropContainer: {
+    flex: 1,
+    backgroundColor: "black",
+  },
+
+  cropOverlayWrapper: {
+    ...StyleSheet.absoluteFillObject,
+  },
+
+  cropOverlay: {
+    ...StyleSheet.absoluteFillObject,
+  },
+
+  cropShadow: {
+    position: "absolute",
+    backgroundColor: "rgba(0,0,0,0.55)",
+  },
+
+  cropBox: {
+    position: "absolute",
+    borderWidth: 2,
+    borderColor: "#7C3AED",
+    backgroundColor: "transparent",
+    zIndex: 10,
+  },
+
+  cropHandle: {
+    position: "absolute",
+    width: 28,
+    height: 28,
+    borderRadius: 14,
+    backgroundColor: "white",
+    borderWidth: 2,
+    borderColor: "#7C3AED",
+    zIndex: 20,
+  },
+
+  confirmCircle: {
+    position: "absolute",
+    width: 32,
+    height: 32,
+    borderRadius: 16,
+    backgroundColor: "#16A34A",
+    justifyContent: "center",
+    alignItems: "center",
+    elevation: 8,
+    zIndex: 30,
+  },
 
   bottomControls: {
     position: "absolute",
