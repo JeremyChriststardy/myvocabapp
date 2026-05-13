@@ -756,7 +756,7 @@ export default function CameraScreen() {
 
                         <TouchableOpacity
                           style={[styles.confirmCircle, {
-                            left: cropRect.x + cropRect.width - 28,
+                            left: cropRect.x + cropRect.width - 16,
                             top: cropRect.y - 16,
                           }]}
                           onPress={handleConfirm}
@@ -955,7 +955,7 @@ const styles = StyleSheet.create({
   cropBox: {
     position: "absolute",
     borderWidth: 2,
-    borderColor: "#7C3AED",
+    borderColor: "#FFFFFF",
     backgroundColor: "transparent",
     zIndex: 10,
   },
