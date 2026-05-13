@@ -1,18 +1,18 @@
 "use client"
 
-import React, { useEffect, useState, useCallback } from "react";
-import { 
-  View, 
-  Text, 
-  StyleSheet, 
-  TouchableOpacity, 
-  FlatList, 
-  Image, 
-  ActivityIndicator,
-  RefreshControl 
-} from "react-native";
-import { useRouter } from "expo-router";
 import { supabase } from "@/supabase";
+import { useFocusEffect, useRouter } from "expo-router";
+import React, { useCallback, useState } from "react";
+import {
+  ActivityIndicator,
+  FlatList,
+  Image,
+  RefreshControl,
+  StyleSheet,
+  Text,
+  TouchableOpacity,
+  View
+} from "react-native";
 
 // Updated to match Web interface
 type HistoryItem = {
@@ -23,6 +23,7 @@ type HistoryItem = {
   image: string;
   part_of_speech: string;
   created_at: string;
+  entry_source?: string;
 };
 
 export default function HistoryScreen() {
@@ -36,50 +37,34 @@ export default function HistoryScreen() {
     const { data: { user } } = await supabase.auth.getUser();
     if (!user) return;
 
-    // 1. Fetch the data from the table
-    const { data, error } = await supabase
-      .from("user_vocabs")
-      .select(`
-        id,
-        created_at,
-        phonetic,
-        image_path,
-        dictionary_entries (
-          word,
-          definition,
-          part_of_speech
-        )
-      `)
-      .eq("user_id", user.id)
-      .order("created_at", { ascending: false });
+    const { data, error } = await supabase.rpc("get_user_history", {
+      p_user_id: user.id,
+    });
 
     if (error) throw error;
 
-    // 2. Transform data and generate Signed URLs for private images
-    const formattedData = await Promise.all((data || []).map(async (item: any) => {
+    const formattedData = (data || []).map((item: any) => {
       let finalImageUrl = "https://via.placeholder.com/150";
 
       if (item.image_path) {
-        // Generate a 1-hour signed URL (3600 seconds)
-        const { data: signedData } = await supabase.storage
+        const { data: publicData } = supabase.storage
           .from("captures")
-          .createSignedUrl(item.image_path, 10800);
-        
-        if (signedData?.signedUrl) {
-          finalImageUrl = signedData.signedUrl;
-        }
+          .getPublicUrl(item.image_path);
+
+        finalImageUrl = publicData?.publicUrl || finalImageUrl;
       }
 
       return {
-        id: item.id,
+        id: item.vocab_id,
         created_at: item.created_at,
-        word: item.dictionary_entries?.word || "Unknown",
-        phonetic: item.phonetic || item.dictionary_entries?.phonetic || "",
-        definition: item.dictionary_entries?.definition || "No definition",
-        image: finalImageUrl, // This is now a working, temporary URL
-        part_of_speech: item.dictionary_entries?.part_of_speech || "Noun",
+        word: item.word || "Unknown",
+        phonetic: item.phonetic || "",
+        definition: item.definition || "No definition",
+        image: finalImageUrl,
+        part_of_speech: item.part_of_speech || "Noun",
+        entry_source: item.entry_source,
       };
-    }));
+    });
 
     setHistory(formattedData);
   } catch (error) {
@@ -90,9 +75,7 @@ export default function HistoryScreen() {
   }
 }, []);
 
-  useEffect(() => {
-    fetchHistory();
-  }, [fetchHistory]);
+  useFocusEffect(useCallback(() => { fetchHistory(); }, [fetchHistory]));
 
   const onRefresh = () => {
     setRefreshing(true);
@@ -116,6 +99,11 @@ export default function HistoryScreen() {
               {new Date(item.created_at).toLocaleDateString()}
             </Text>
           </View>
+          {item.entry_source === "community" && (
+            <View style={styles.badge}>
+              <Text style={styles.badgeText}>Community</Text>
+            </View>
+          )}
           <Text style={styles.phonetic}>{item.phonetic}</Text>
         </View>
       </View>
@@ -225,6 +213,20 @@ const styles = StyleSheet.create({
   timestamp: {
     color: "#444",
     fontSize: 11,
+  },
+  badge: {
+    marginTop: 6,
+    alignSelf: "flex-start",
+    backgroundColor: "rgba(102, 126, 234, 0.16)",
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    borderRadius: 12,
+    marginBottom: 6,
+  },
+  badgeText: {
+    color: "#7C83FF",
+    fontSize: 11,
+    fontWeight: "700",
   },
   context: {
     color: "#4DA6FF",

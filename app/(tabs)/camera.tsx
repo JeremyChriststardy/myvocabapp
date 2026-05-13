@@ -216,32 +216,28 @@ export default function CameraScreen() {
         { compress: 0.7, format: ImageManipulator.SaveFormat.JPEG }
       );
 
-      // NOTICE: We completely deleted Step 5 (Reading as Base64). 
-      // We are passing the native file URI directly to the uploader!
-      
-      console.log("🚀 5. Firing sendImage with URI:", manipulatedImage.uri);
+      console.log("📄 5. Reading manipulated image as Base64...");
+      const base64 = await FileSystem.readAsStringAsync(manipulatedImage.uri, {
+        encoding: 'base64',
+      });
+      setCompressedBase64(base64);
+
+      console.log("🚀 6. Firing sendImage with URI:", manipulatedImage.uri);
       
       const resultData = await sendImage(manipulatedImage.uri, { mode });
+      if (!resultData) {
+        throw new Error("Image processing failed; no result returned.");
+      }
 
       console.log("🏁 6. handleCapture completed.");
       
-      setResult(
-        resultData
-          ? {
-              word: resultData.word,
-              definition: resultData.definition,
-              id: resultData.id || "temp-id",
-              phonetic: resultData.phonetic || "",
-              part_of_speech: resultData.part_of_speech || "Noun",
-            }
-          : {
-              word: "example",
-              definition: "mock definition",
-              id: "mock-id",
-              phonetic: "",
-              part_of_speech: "Noun",
-            }
-      );
+      setResult({
+        word: resultData.word,
+        definition: resultData.definition,
+        id: resultData.id || "temp-id",
+        phonetic: resultData.phonetic || "",
+        part_of_speech: resultData.part_of_speech || "Noun",
+      });
       setCameraState("result");
     } catch (err) {
       console.error("❌ CAPTURE CRASHED:", err);
@@ -489,27 +485,26 @@ export default function CameraScreen() {
         { compress: 0.7, format: ImageManipulator.SaveFormat.JPEG } // Removed base64: true
       );
 
-      // 2. Pass the URI directly to sendImage (NOT the base64 string)
+      console.log("📄 2. Reading cropped image as Base64...");
+      const base64 = await FileSystem.readAsStringAsync(croppedImage.uri, {
+        encoding: 'base64',
+      });
+      setCompressedBase64(base64);
+
+      // 3. Pass the URI directly to sendImage (NOT the base64 string)
       console.log("🚀 Gaming mode firing sendImage with URI:", croppedImage.uri);
       const resultData = await sendImage(croppedImage.uri, { mode: "gaming" });
+      if (!resultData) {
+        throw new Error("Gaming scan failed; no result returned.");
+      }
 
-      setResult(
-        resultData
-          ? {
-              word: resultData.word,
-              definition: resultData.definition,
-              id: resultData.id || "temp-id",
-              phonetic: resultData.phonetic || "",
-              part_of_speech: resultData.part_of_speech || "Noun",
-            }
-          : {
-              word: "example",
-              definition: "mock definition",
-              id: "mock-id",
-              phonetic: "",
-              part_of_speech: "Noun",
-            }
-      );
+      setResult({
+        word: resultData.word,
+        definition: resultData.definition,
+        id: resultData.id || "temp-id",
+        phonetic: resultData.phonetic || "",
+        part_of_speech: resultData.part_of_speech || "Noun",
+      });
       setCameraState("result");
     } catch (err) {
       console.error("Gaming crop confirmation failed", err);
@@ -801,22 +796,18 @@ export default function CameraScreen() {
                                 return;
                               }
 
-                              if (!compressedBase64) {
-                                console.error("Compressed Base64 is missing. Capture must complete before saving.");
+                              if (!compressedBase64 || !result) {
+                                console.error("Compressed Base64 or result is missing. Capture must complete before saving.");
                                 return;
                               }
 
-                              const fileExt = "jpg";
-                              const filePath = `${user.id}/${Date.now()}.${fileExt}`;
+                              const filePath = `${user.id}/${Date.now()}.jpg`;
                               console.log("1. Upload initiated using precompressed Base64...");
 
-                              const base64 = compressedBase64;
-
-                              // --- 3. UPLOAD USING DECODED ARRAYBUFFER ---
-                              // decode(base64) turns the string into binary data Supabase loves
-                              const { data: uploadData, error: uploadError } = await supabase.storage
+                              // --- 1. UPLOAD IMAGE TO STORAGE ---
+                              const { error: uploadError } = await supabase.storage
                                 .from("captures")
-                                .upload(filePath, decode(base64), {
+                                .upload(filePath, decode(compressedBase64), {
                                   contentType: "image/jpeg",
                                   upsert: true 
                                 });
@@ -826,24 +817,28 @@ export default function CameraScreen() {
                                 return;
                               }
 
-                              // --- 4. DATABASE SAVE ---
-                              console.log("4. Database upsert initiated...");
-                              const { error: dbError } = await supabase.from("user_vocabs").upsert({
-                                user_id: user.id,
-                                dictionary_entry_id: result.id,
-                                phonetic: result.phonetic || "",
-                                status: "New",
-                                image_path: filePath, 
+                              // --- 2. CALL ATOMIC RPC FUNCTION ---
+                              console.log("2. Calling atomic save RPC function...");
+                              // Add 'data: newVocabId' here
+                              const { data: newVocabId, error: rpcError } = await supabase.rpc('handle_vocab_save', {
+                                p_user_id: user.id,
+                                p_word_id: result.id,
+                                p_word: result.word,
+                                p_definition: result.definition,
+                                p_phonetic: result.phonetic || "",
+                                p_pos: result.part_of_speech || "Noun",
+                                p_image_path: filePath
                               });
 
-                              if (dbError) {
-                                console.error("Database save failed:", dbError);
-                              } else {
-                                console.log("Success! Small image saved via ArrayBuffer.");
-                                router.push("/history"); 
+                              if (rpcError) {
+                                console.error("Atomic save failed:", rpcError);
+                                return;
                               }
+
+                              console.log("3. Success! Word saved via atomic RPC.");
+                              router.push("/history"); 
                             } catch (err) {
-                              console.error("The Ultimate Bypass Failed:", err);
+                              console.error("Save operation crashed:", err);
                             }
                           }}
                         >
